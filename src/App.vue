@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { useQuery } from '@vue/apollo-composable'
+import { useQuery, useSubscription } from '@vue/apollo-composable'
 import gql from 'graphql-tag'
 import { sub } from 'date-fns'
 
-import { computed } from 'vue'
+import { computed, watch, watchEffect } from 'vue'
 import { Line } from 'vue-chartjs'
 import 'chartjs-adapter-date-fns'
 
@@ -30,8 +30,9 @@ ChartJS.register(
   PointElement
 )
 
-type Record = { time: string; avg: number }
-type Records = Array<Record>
+type AvgRecord = { time: string; avg: number }
+type AvgRecords = Array<AvgRecord>
+type Record = { createdAt: string, value: number }
 
 const tick = sub(new Date(), { minutes: 10 }).toISOString()
 const QUERY = gql`
@@ -52,7 +53,15 @@ const NEW_VALUES = gql`
   }
 `
 
-const { result, subscribeToMore } = useQuery<{ temperatureRecap: Records }>(
+const LAST_TEMPERATURE = gql`
+subscription lastValue {
+  temperature(limit: 1, order_by: {createdAt: desc}) {
+    createdAt
+    value
+  }
+}`
+
+const { result, subscribeToMore } = useQuery<{ temperatureRecap: AvgRecords }>(
   QUERY,
   { tick }
 )
@@ -61,8 +70,8 @@ subscribeToMore({
   document: NEW_VALUES,
   variables: { tick },
   updateQuery: (previousResult, { subscriptionData }) => {
-    const previous: Records = previousResult?.temperatureRecap || []
-    const next: Records = subscriptionData.data.temperatureRecap || []
+    const previous: AvgRecords = previousResult?.temperatureRecap || []
+    const next: AvgRecords = subscriptionData.data.temperatureRecap || []
     return { temperatureRecap: [...previous.filter((r) => !next.find((n) => n.time === r.time)), ...next] }
   }
 })
@@ -92,8 +101,12 @@ const chartOptions: TChartOptions<'line'> = {
     }
   }
 }
+
+const { result: lastValueResult } = useSubscription<{ temperature: Array<Record> }>(LAST_TEMPERATURE, null, { fetchPolicy: 'no-cache' })
+const lastValue = computed<Record | undefined>(() => lastValueResult.value?.temperature[0])
 </script>
 
 <template>
+  <h2 v-if="lastValue">Last value: {{lastValue.value}} at {{lastValue.createdAt}}</h2>
   <Line :chart-data="chartData" :chart-options="chartOptions"></Line>
 </template>
